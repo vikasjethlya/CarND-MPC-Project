@@ -17,6 +17,10 @@ constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
 
+// For converting back and forth between Km and Miles
+double km2mile(double x) { return x / 1.609344; }
+double mile2km(double x) { return x * 1.609344; }
+
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
 // else the empty string "" will be returned.
@@ -87,10 +91,71 @@ int main() {
           // j[1] is the data JSON object
           vector<double> ptsx = j[1]["ptsx"];
           vector<double> ptsy = j[1]["ptsy"];
+
+
           double px = j[1]["x"];
           double py = j[1]["y"];
           double psi = j[1]["psi"];
-          double v = j[1]["speed"];
+          double v = mile2km(j[1]["speed"]);
+
+          // convert from map to vehicle co-ordinate
+
+          for (unsigned int i = 0 ; i < ptsx.size() ; i++ )
+          {
+        	  double shift_x = ptsx[i] - px ;
+        	  double shift_y = ptsy[i] - py ;
+        	  ptsx[i] = (shift_x * cos(0-psi) - shift_y * sin(0-psi));
+        	  ptsy[i] = (shift_x * sin(0-psi) + shift_y * cos(0-psi));
+
+          }
+
+          // Type casting ptsx and ptsy from vector to eign vector
+
+          Eigen::VectorXd x_temp = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(ptsx.data(), ptsx.size());
+          Eigen::VectorXd y_temp = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(ptsy.data(), ptsy.size());
+
+/*
+          double* ptrx = &ptsx[0];
+          Eigen::Map<Eigen::VectorXd> ptsx_transform(ptrx , 6);
+
+          double* ptry = &ptsy[0];
+          Eigen::Map<Eigen::VectorXd> ptsy_transform(ptry , 6);
+
+*/
+          // calculating the polynomial coefficient
+
+          auto coeffs = polyfit(x_temp, y_temp, 3);
+
+         // auto coeffs = polyfit(ptsx_transform, ptsy_transform, 3);
+
+          cout << "Coeffs Size :"<< coeffs.size() << endl;
+
+          for (unsigned int i =0 ; i < coeffs.size() ; i++)
+          {
+              cout << coeffs[i] << endl;
+          }
+
+
+
+          // calculate cte
+          double cte =  0.0 ;
+          cte = polyeval(coeffs, 0);
+
+          // calculate epsi
+
+          double epsi =  0.0 ;
+          epsi =  -atan(coeffs[1]) ;
+
+          //cout << "Vehicle Orientation :" << psi << endl;
+
+          // Define the state vector
+
+          //double x_pred = v * cos(-psi) * 0.1 ;
+          //double y_pred = v * sin(-psi) * 0.1 ;
+
+          Eigen::VectorXd state(6);
+          //state << x_pred, y_pred, 0, v, cte, epsi;
+          state << 0, 0, 0, v, cte, epsi;
 
           /*
           * TODO: Calculate steering angle and throttle using MPC.
@@ -101,25 +166,53 @@ int main() {
           double steer_value;
           double throttle_value;
 
+          // Call MPC solver
+          auto vars = mpc.Solve(state, coeffs);
+
+          steer_value = vars[0];
+          throttle_value = vars[1];
+
           json msgJson;
-          // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
+
+          // NOTE: Remember to divide by  before you send the steering value back.
           // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
-          msgJson["steering_angle"] = steer_value;
+          msgJson["steering_angle"] = -steer_value/deg2rad(25);
           msgJson["throttle"] = throttle_value;
 
-          //Display the MPC predicted trajectory 
-          vector<double> mpc_x_vals;
-          vector<double> mpc_y_vals;
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
 
-          msgJson["mpc_x"] = mpc_x_vals;
-          msgJson["mpc_y"] = mpc_y_vals;
 
           //Display the waypoints/reference line
           vector<double> next_x_vals;
           vector<double> next_y_vals;
+
+          double poly_inc = 2.5 ;
+          unsigned int num_points = 25;
+
+          for (unsigned int i = 1 ; i < num_points ; i ++)
+          {
+        	  next_x_vals.push_back(poly_inc * i);
+        	  next_y_vals.push_back(polyeval(coeffs, poly_inc * i));
+          }
+
+          //Display the MPC predicted trajectory
+          vector<double> mpc_x_vals;
+          vector<double> mpc_y_vals;
+
+          for (unsigned int i = 2 ; i < vars.size() ; i++)
+          {
+        	  if(i%2 == 0)
+        	  {
+        		  mpc_x_vals.push_back(vars[i]);
+        	  }
+        	  else
+        	  {
+        		  mpc_y_vals.push_back(vars[i]);
+        	  }
+          }
+
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
@@ -127,6 +220,8 @@ int main() {
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
 
+          msgJson["mpc_x"] = mpc_x_vals;
+          msgJson["mpc_y"] = mpc_y_vals;
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
