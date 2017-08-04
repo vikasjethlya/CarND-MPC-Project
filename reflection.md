@@ -37,6 +37,7 @@ The vehicle model can be found in the class FG_eval.
 	 * N = 20 
 	 * dt = 0.05
 * The car drives smoothly around the track with velocity up to 40 mph.
+* If i increase the speed beyond 40, the car is too wobbly and goes out of the track.
 
 ## Polynomial Fitting and MPC Preprocessing :
 
